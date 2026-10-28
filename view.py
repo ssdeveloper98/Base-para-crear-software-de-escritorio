@@ -1,8 +1,8 @@
 import tkinter as GUI
-import sqlite3
 from tkinter import ttk, messagebox
 from events import EventManager
 from models import*
+from view_builders import CRUDViewBuilder
 
 #LISTAS DE OPCIONES PARA LOS COMBOBOX
 GENEROS = ["Masculino", "Femenino", "Otro"]
@@ -88,9 +88,10 @@ MODEL_METADATA: dict[str, dict[str, object]] = {
 }
 
 class AppGui:
-    def __init__(self, root: GUI.Tk, event_manager: EventManager):
+    def __init__(self, root: GUI.Tk, container):
         self.root = root
-        self.event_manager = event_manager
+        self.event_manager = container.obtener("eventos")
+        self.validadores = container.obtener("validadores")
 
 
         #Eventos operativos (Servicios)
@@ -209,124 +210,64 @@ class AppGui:
             contenedor_target.columnconfigure(i, weight=1)
         
     #Aplicacion de patron factory para crear formularios dinamicos para cada modulo
-    def cargar_modulo_crud(self, nombre_modulo:str)->None:
+    
+        
+    
+    def cargar_modulo_crud(self, nombre_modulo:str):
         self.limpiar_area_trabajo()
         meta = MODEL_METADATA[nombre_modulo]
         tabla = meta['table_name']
+        
+        #Funcion que permite capturar el msg de respuesta que emite el controlador
+        def manejar_msg_crud(msg:str):
+            self.mostrar_msg_exito(msg)
+            self.event_manager.emitir(f"request_read_all_{tabla}",{})
 
         #Inicializamos los eventos registrados para evitar que al realizar alguna
         #acción esta de error al buscar en eventos viejos
 
-        self.event_manager.listeners[f'on_success_{tabla}']=[]
         self.event_manager.listeners[f'on_error_{tabla}']=[]
         self.event_manager.listeners[f'on_success_save_{tabla}']=[]
         self.event_manager.listeners[f'on_success_update_{tabla}']=[]
         self.event_manager.listeners[f'on_success_delete_{tabla}']=[]
-        self.event_manager.listeners['on_data_loaded_{tabla}']=[]
-
+        self.event_manager.listeners[f'on_data_loaded_{tabla}']=[]
+        self.event_manager.listeners[f'data_changed_{tabla}']=[]
         #Suscripcion de eventos (Nota: los nombres los coloca el programador,
         #usar nombres de eventos descriptivos para que el codigo sea )
-        self.event_manager.suscribir(f"on_success_{tabla}", self.mostrar_msg_exito)
         self.event_manager.suscribir(f"on_error_{tabla}", self.mostrar_msg_error)
-        self.event_manager.suscribir(f"on_success_save_{tabla}", lambda msg: self.event_manager.emitir(f"request_read_all_{tabla}", {}))
-        self.event_manager.suscribir(f"on_success_update_{tabla}", lambda msg: self.event_manager.emitir(f"request_read_all_{tabla}",{}))
-        self.event_manager.suscribir(f"on_success_delete_{tabla}", lambda msg: self.event_manager.emitir(f"request_read_all_{tabla}",{}))
+        self.event_manager.suscribir(f"on_success_save_{tabla}", manejar_msg_crud)
+        self.event_manager.suscribir(f"on_success_update_{tabla}",manejar_msg_crud)
+        self.event_manager.suscribir(f"on_success_delete_{tabla}", manejar_msg_crud)
         
         #Titulo del modulo activo
         label_modulo = ttk.Label(self.main_workplace, text=f"Gestión de {nombre_modulo}", style='Title.TLabel')
         label_modulo.grid(row=0, column=0, columnspan=2, sticky=GUI.W, pady=(0,15))
-
-        #Panel Izquierdo, el formulario es generado dinamicamente
-        frame_form = ttk.LabelFrame(self.main_workplace, text="Datos de registro", padding=15)
-        frame_form.grid(row=1, column=0, sticky='nsew', padx=(0,15), pady=(0,15))
-
-        #Diccionario para almacenar las referencias a las variables del formulario
-        form_variables ={}
-        row_idx = 0
-
+     
         #Validaciones a nivel de pulsaciones de teclas para los campos del formulario
-        val_int_cmd = (self.root.register(self.validar_entero), '%P')
-        val_float_cmd = (self.root.register(self.validar_flotante), '%P')
-        val_text_cmd = (self.root.register(self.validar_texto), '%P')
+        validaciones={
+            "integer":(self.root.register(self.validadores["integer"].validar), '%P'),
+            "float" :(self.root.register(self.validadores["float"].validar), '%P'),
+            "text":(self.root.register(self.validadores["text"].validar), '%P')
+        }
+        
+        builder = CRUDViewBuilder(self.main_workplace, meta, validaciones, self.aplicar_mascara_cedula)
 
-        for field_name, props in meta["fields"].items():
-            label = ttk.Label(frame_form, text =f"{props['label']}:")
-            label.grid(row=row_idx, column=0, sticky=GUI.W, pady=6, padx=(0,10))
-
-            if props['type'] == "combo":
-                var = GUI.StringVar()
-                widget = ttk.Combobox(frame_form, textvariable=var, values=props['values'], state='readonly',width=25)
-                widget.current(0)
-                widget.grid(row=row_idx, column=1, sticky=GUI.W, pady=6)
-                form_variables[field_name] = var
-            
-            elif props['type'] in ["string", "number", "cedula"]:
-                var = GUI.StringVar()
-                widget = ttk.Entry(frame_form, textvariable=var, width=28)
-            
-                #Aplicar validaciones de entrada
-                if props.get('valid') == "integer":
-                    widget.config(validate='key', validatecommand=val_int_cmd)
-                elif props.get('valid') == "float":
-                    widget.config(validate='key', validatecommand=val_float_cmd)
-                elif props.get('valid') == "text":
-                    widget.config(validate='key', validatecommand=val_text_cmd)
-                elif props.get('valid') == "cedula":
-                    #Formateo y enmascaramiento de la cédula en tiempo real
-                    widget.bind('<KeyRelease>', lambda event, v=var: self.aplicar_mascara_cedula(v))
-                if props.get('readonly_on_create', False):
-                    widget.config(state='disabled')
-                
-                widget.grid(row=row_idx, column=1, sticky=GUI.W, pady=6)
-                form_variables[field_name] = var
-            row_idx +=1
-        #Panel de acciones internas(CRUD)
-        frame_acciones = ttk.Frame(frame_form)
-        frame_acciones.grid(row=row_idx, column=0, columnspan=2, pady=15, sticky=GUI.EW)
+        builder.construir_contenedores()
+        builder.construir_formulario()
+        btn_crear,btn_limpiar,btn_eliminar= builder.construir_botones_accion()
+        btn_buscar, campo = builder.panel_busqueda()
+        grid_datos = builder.construir_datagrid()
+        form_variables = builder.obtener_variables()
         
-        #Boton crear/guardar registro
-        btn_crear = ttk.Button(frame_acciones, text="Guardar", command=lambda: self.ejecutar_guardado_dinamico(nombre_modulo, form_variables, grid_datos))
-        btn_crear.pack(side=GUI.LEFT, padx=4)
-        
-        #Boton eliminar registro
-        btn_eliminar = ttk.Button(frame_acciones, text="Eliminar", style='Danger.TButton', command=lambda: self.ejecutar_eliminacion_dinamica(nombre_modulo, form_variables, grid_datos))
-        btn_eliminar.pack(side=GUI.RIGHT, padx=4)
-        
-        #Boton limpiar formulario
-        btn_limpiar = ttk.Button(frame_acciones, text="Limpiar campos", style='Action.TButton', command= lambda: self.limpiar_formulario(form_variables, meta, grid_datos))
-        btn_limpiar.pack(side = GUI.RIGHT, padx=4)
-        
-        #Panel derecho, DataGrid para mostrar registros
-        frame_grid = ttk.LabelFrame(self.main_workplace, text="Registros", padding=10)
-        frame_grid.grid(row=1, column=1, sticky='nsew')
-        
-        columnas= list(meta['fields'].keys())
-        grid_datos = ttk.Treeview(frame_grid, columns=columnas, show="headings", selectmode='browse')
-
-        for col in columnas:
-            grid_datos.heading(col, text=meta["fields"][col]["label"].upper())
-            grid_datos.column(col, width=110, anchor=GUI.CENTER)
-        
-        grid_datos.pack(side=GUI.LEFT, fill=GUI.BOTH, expand=True)
-        
-        #Scrollbar Vertical
-        scrollbar_vert = ttk.Scrollbar(frame_grid, orient=GUI.VERTICAL, command = grid_datos.yview)
-        grid_datos.configure(yscrollcommand= scrollbar_vert.set)
-        scrollbar_vert.pack(side=GUI.RIGHT, fill=GUI.Y)
-        
-        #Scrollbar Inferior
-        scrollbar_inf = ttk.Scrollbar(grid_datos, orient=GUI.HORIZONTAL, command= grid_datos.xview)
-        grid_datos.configure(xscrollcommand=scrollbar_inf.set)
-        scrollbar_inf.pack(side=GUI.BOTTOM, fill=GUI.X)
-
+        #Enlace de la logica de la interfaz principal con los componentes Builder
+        btn_crear.config(command= lambda : self.ejecutar_guardado_dinamico(nombre_modulo, form_variables, grid_datos))
+        btn_eliminar.config(command= lambda: self.ejecutar_eliminacion_dinamica(nombre_modulo, form_variables, grid_datos))
+        btn_limpiar.config(command= lambda: self.limpiar_formulario(form_variables, meta, grid_datos))
+        btn_buscar.config(command=lambda: self.ejecutar_busqueda_dinamica(nombre_modulo, campo))
         #Enlace para pasar los datos de la tabla a el formulario para actualizar los datos
         grid_datos.bind('<<TreeviewSelect>>', lambda event: self.transferir_grid_a_formulario(nombre_modulo, grid_datos, form_variables))
         
-        #Configuracion de propiedades responsive
-        self.main_workplace.columnconfigure(0, weight=1)
-        self.main_workplace.columnconfigure(1, weight=3)
-        self.main_workplace.rowconfigure(1, weight=1)
-        
+        self.event_manager.suscribir(f"data_changed_{tabla}",lambda registro: self.llenar_grid_datos(nombre_modulo, grid_datos, registro))
         self.event_manager.suscribir(f"on_data_loaded_{tabla}", lambda registros: self.llenar_grid_datos(nombre_modulo,grid_datos, registros))
         self.event_manager.emitir(f"request_read_all_{tabla}",{})
         
@@ -336,67 +277,19 @@ class AppGui:
             grid.delete(item)
         
         meta = MODEL_METADATA[nombre_modulo]
-        for reg in registros:
-            valores = []
-            for field in meta['fields'].keys():
-                val = reg.get(field, "")
-                #Si el campo es una cedula mostrarlo formateado
-                if meta['fields'][field].get('valid') == "cedula" and val:
-                    try:
-                        val = f"{int(val):,}".replace(",",".")
-                    except ValueError:
+        if len(registros) > 1:
+            for reg in registros:
+                valores = []
+                for field in meta['fields'].keys():
+                    val = reg.get(field, "")
+                    #Si el campo es una cedula mostrarlo formateado
+                    if meta['fields'][field].get('valid') == "cedula" and val:
+                        try:
+                            val = f"{int(val):,}".replace(",",".")
+                        except ValueError:
                             pass
-                valores.append(val)
-            grid.insert("", GUI.END, values=valores)
-        
-    def mostrar_msg_exito(self, msg:str=""):
-        messagebox.showinfo("Operacion exitosa", msg)
-    
-    def mostrar_msg_error(self, msg: str = ""):
-        messagebox.showerror("Error", msg)
-    
-        #Validaciones y enmascaramiento en tiempo real.
-    
-    def validar_entero(self, texto : str) -> bool:
-        if texto == "":
-            return True
-        return texto.isdigit()
-        
-    def validar_flotante(self, texto: str) -> bool:
-        if texto == "":
-            return True
-        try:
-            float(texto)
-            return True
-        except ValueError:
-            return False
-    
-    def validar_texto(self, texto : str) -> bool:
-        if texto == "":
-            return True
-        
-        #Permite letras, espacios y caracteres especiales comunes en nombres
-        return all(c.isalpha() or c.isspace() for c in texto)
-    
-    def aplicar_mascara_cedula(self, var: GUI.StringVar):
-        #Filtra para dejar exclusivamente digitos numéricos y purificados
-        raw_digits = "".join([c for c in var.get() if c.isdigit()])
-        #Se restringe la cedula a un maximo de 8 digitos
-        if len(raw_digits)>8:
-            raw_digits = raw_digits[:8]
-        
-        if not raw_digits:
-            var.set("")
-            return
-        
-        #Algoritmo de enmascaramiento para cédula por .
-        valor_int = int(raw_digits)
-        formatted = f"{valor_int:,}".replace(",",".")
-        var.set(formatted)
-    
-    def purificar_cedula(self, cedula: str) -> str:
-        return cedula.replace(".", "").strip()
-    
+                    valores.append(val)
+                grid.insert("", GUI.END, values=valores)
     #Control de datos dinamicos y procesamiento de CRUD interno
     
     def transferir_grid_a_formulario(self, nombre_modulo: str, grid: ttk.Treeview, form_vars: dict):
@@ -424,7 +317,17 @@ class AppGui:
         if grid:
             grid.selection_remove(grid.selection())
 
-    
+    def ejecutar_busqueda_dinamica(self, nombre_modulo:str,campo:GUI.Entry):
+        meta = MODEL_METADATA[nombre_modulo]
+        tabla = meta['table_name']
+        pk = campo.get().strip()
+
+        if pk:
+            self.event_manager.emitir(f"request_read_{tabla}",pk)
+        else:
+            messagebox.showwarning("Dato invalido", "El dato ingresado no coincide con ningun registro")
+
+
     def ejecutar_guardado_dinamico(self, nombre_modulo:str, form_vars: dict, grid: ttk.Treeview):
         meta = MODEL_METADATA[nombre_modulo]
         tabla = meta["table_name"]
@@ -534,5 +437,53 @@ class AppGui:
         frame_resumen = ttk.LabelFrame(self.main_workplace, text="Métricas de Participación Académica", padding=20)
         frame_resumen.pack(fill=GUI.BOTH, expand=True)
             
-        ttk.Label(frame_resumen, text=f"Total de Asistencias Tomadas: {data['total_asistencias']}", font=("Segoe UI", 12)).pack(anchor=GUI.W, pady=10)
-        ttk.Label(frame_resumen, text=f"Tasa de Presencialidad Estudiantil: {data['porcentaje_asistencia']}", font=("Segoe UI", 14, "bold"), foreground=self.COLOR_PRIMARY).pack(anchor=GUI.W, pady=10)
+        ttk.Label(frame_resumen, text=f"Total de asistencias: {data['total_asistencias']}", font=("Segoe UI", 12)).pack(anchor=GUI.W, pady=10)
+        ttk.Label(frame_resumen, text=f"Porcentaje asistencial: {data['porcentaje_asistencia']}", font=("Segoe UI", 14, "bold"), foreground=self.COLOR_PRIMARY).pack(anchor=GUI.W, pady=10)
+
+    def mostrar_msg_exito(self, msg:str=""):
+        messagebox.showinfo("Operacion exitosa", msg)
+    
+    def mostrar_msg_error(self, msg: str = ""):
+        messagebox.showerror("Error", msg)
+    
+        #Validaciones y enmascaramiento en tiempo real.
+    
+    def validar_entero(self, texto : str) -> bool:
+        if texto == "":
+            return True
+        return texto.isdigit()
+        
+    def validar_flotante(self, texto: str) -> bool:
+        if texto == "":
+            return True
+        try:
+            float(texto)
+            return True
+        except ValueError:
+            return False
+    
+    def validar_texto(self, texto : str) -> bool:
+        if texto == "":
+            return True
+        
+        #Permite letras, espacios y caracteres especiales comunes en nombres
+        return all(c.isalpha() or c.isspace() for c in texto)
+    
+    def aplicar_mascara_cedula(self, var: GUI.StringVar):
+        #Filtra para dejar exclusivamente digitos numéricos y purificados
+        raw_digits = "".join([c for c in var.get() if c.isdigit()])
+        #Se restringe la cedula a un maximo de 8 digitos
+        if len(raw_digits)>8:
+            raw_digits = raw_digits[:8]
+        
+        if not raw_digits:
+            var.set("")
+            return
+        
+        #Algoritmo de enmascaramiento para cédula por .
+        valor_int = int(raw_digits)
+        formatted = f"{valor_int:,}".replace(",",".")
+        var.set(formatted)
+    
+    def purificar_cedula(self, cedula: str) -> str:
+        return cedula.replace(".", "").strip()

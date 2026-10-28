@@ -41,7 +41,7 @@ class Estudiantes(Personas):
 class Cursos:
     def __init__(self, codigo : str, empleado_id:Empleados, nombre : str, fecha_inicio : date, fecha_fin : date, modalidad : str, horario : str, dia : str):
         self.codigo = codigo
-        self.empleadi_id = empleado_id
+        self.empleado_id = empleado_id
         self.nombre = nombre
         self.fecha_inicio = fecha_inicio
         self.fecha_fin = fecha_fin
@@ -52,21 +52,21 @@ class Cursos:
         return f'{self.codigo} {self.nombre}'
 
 class Inscripciones:
-    def __init__(self, id:int, fecha_inscripcion : date, estudiante : Estudiantes, curso: Cursos):
+    def __init__(self, id:int, fecha_inscripcion : date, estudiante_id: int, curso_id: int):
         self.id = id
         self.fecha_inscripcion = fecha_inscripcion
-        self.estudiante = estudiante
-        self.curso = curso
+        self.estudiante_id = estudiante_id
+        self.curso_id = curso_id
 
     def __str__(self):
-        return f'{self.id} {self.fecha_inscripcion} {self.estudiante} {self.curso}'
+        return f'{self.id} {self.fecha_inscripcion} {self.estudiante_id} {self.curso_id}'
 
 class Asistencias:
-    def __init__(self, id:int, fecha_asistencia : date, estudiante: Estudiantes, curso: Cursos):
+    def __init__(self, id:int, fecha_asistencia : date, estudiante_id: int, curso_id: int):
         self.id = id
         self.fecha_asistencia = fecha_asistencia
-        self.estudiante = estudiante
-        self.curso = curso
+        self.estudiante_id = estudiante_id
+        self.curso_id = curso_id
 
     def __str__(self):
-        return f'{self.id} {self.fecha_asistencia} {self.estudiante} {self.curso}'
+        return f'{self.id} {self.fecha_asistencia} {self.estudiante_id} {self.curso_id}'
